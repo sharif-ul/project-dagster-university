@@ -1,9 +1,7 @@
-import duckdb
-import os
 import requests
+from dagster_duckdb import DuckDBResource
 from dagster_essentials.defs.assets import constants
 import dagster as dg
-from dagster._utils.backoff import backoff
 
 @dg.asset
 def taxi_trips_file() -> None:
@@ -30,12 +28,12 @@ def taxi_zones_file() -> None:
 
     with open(constants.TAXI_ZONES_FILE_PATH , "wb") as output_file:
         output_file.write(raw_trips.content)
-        
+
 # src/dagster_essentials/defs/assets/trips.py
 @dg.asset(
     deps=["taxi_trips_file"]
 )
-def taxi_trips() -> None:
+def taxi_trips(database: DuckDBResource) -> None:
     """
       The raw taxi trips dataset, loaded into a DuckDB database
     """
@@ -55,13 +53,29 @@ def taxi_trips() -> None:
           from 'data/raw/taxi_trips_2023-03.parquet'
         );
     """
+    with database.get_connection() as conn:
+      conn.execute(query)
+        
+@dg.asset(
+    deps=["taxi_zones_file"]
+)
+def taxi_zones(database: DuckDBResource) -> None:
+    """
+      The raw taxi tzones dataset, loaded into a DuckDB database
+    """
+    query_zone = """
+        create or replace table zones as (
+          select
+            LocationID as zone_id,
+            zone,
+            borough,
+            the_geom as geometry
+          from 'data/raw/taxi_zones.csv'
+        );
+    """
 
-    conn = backoff(
-        fn=duckdb.connect,
-        retry_on=(RuntimeError, duckdb.IOException),
-        kwargs={
-            "database": os.getenv("DUCKDB_DATABASE"),
-        },
-        max_retries=10,
-    )
-    conn.execute(query)
+
+    with database.get_connection() as conn:
+      conn.execute(query_zone)
+
+
